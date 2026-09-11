@@ -3,6 +3,7 @@
 {{- if ne $modelSpec.enabled false }}
 {{- if not (and (hasKey $modelSpec "raySpec") $modelSpec.raySpec.enabled) }}
 {{- $_ := include "chart.draCheck" $modelSpec -}}
+{{- $_ := include "chart.mpCheck" $modelSpec -}}
 {{- $kv_role := "kv_both" }}
 {{- $kv_rank := 0 }}
 {{- $kv_parallel_size := 1 }}
@@ -207,7 +208,10 @@ spec:
           {{- end }}
           {{- if $modelSpec.lmcacheConfig }}
           {{-   if $modelSpec.lmcacheConfig.enabled }}
-          {{-     if hasKey $modelSpec.lmcacheConfig "enablePD" }}
+          {{-     if and (hasKey $modelSpec.lmcacheConfig "mpServer") $modelSpec.lmcacheConfig.mpServer $modelSpec.lmcacheConfig.mpServer.enabled }}
+          - "--kv-transfer-config"
+          - '{"kv_connector":"LMCacheMPConnector","kv_role":"{{ $kv_role }}","kv_connector_extra_config":{"lmcache.mp.port": {{ $modelSpec.lmcacheConfig.mpServer.port | default 5555 }}}}'
+          {{-     else if hasKey $modelSpec.lmcacheConfig "enablePD" }}
           - "--kv-transfer-config"
           - '{"kv_connector":"LMCacheConnectorV1","kv_role":"{{ $kv_role }}","kv_connector_extra_config":{"discard_partial_chunks": false, "lmcache_rpc_port": {{ $modelSpec.lmcacheConfig.nixlRole | quote }}}}'
           {{-     else if and (hasKey $modelSpec.vllmConfig "v0") (eq (toString $modelSpec.vllmConfig.v0) "1") }}
@@ -449,6 +453,37 @@ spec:
           - name: {{ .Release.Name }}-shared-pvc-storage
             mountPath: /data/shared-pvc-storage
           {{- end }}
+        {{- if and (hasKey $modelSpec "lmcacheConfig") (hasKey $modelSpec.lmcacheConfig "mpServer") $modelSpec.lmcacheConfig.mpServer $modelSpec.lmcacheConfig.mpServer.enabled }}
+        {{- $mp := $modelSpec.lmcacheConfig.mpServer }}
+        - name: lmcache-mp-server
+          image: "{{ default (printf "%s:%s" $modelSpec.repository $modelSpec.tag) $mp.image }}"
+          imagePullPolicy: "{{ $.Values.servingEngineSpec.imagePullPolicy }}"
+          command:
+            - "/opt/venv/bin/lmcache"
+          args:
+            - "server"
+            - "--host"
+            - "127.0.0.1"
+            - "--port"
+            - {{ $mp.port | default 5555 | quote }}
+            - "--http-port"
+            - {{ $mp.httpPort | default 8080 | quote }}
+            - "--chunk-size"
+            - {{ $mp.chunkSize | quote }}
+            - "--l1-size-gb"
+            - {{ $mp.l1SizeGb | quote }}
+            {{- if $mp.separateObjectGroups }}
+            - "--separate-object-groups"
+            {{- end }}
+            - "--eviction-policy"
+            - {{ $mp.evictionPolicy | default "LRU" | quote }}
+          volumeMounts:
+            - name: shm
+              mountPath: /dev/shm
+          {{- with $mp.resources }}
+          resources: {{ toYaml . | nindent 12 }}
+          {{- end }}
+        {{- end }}
         {{- if and $modelSpec.enableLoRA (hasKey $modelSpec "pvcStorage") }}
         - name: sidecar
           image: {{ .Values.servingEngineSpec.sidecar.image }}

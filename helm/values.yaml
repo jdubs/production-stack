@@ -172,6 +172,31 @@ servingEngineSpec:
       cpuOffloadingBufferSize: "30" # @schema type:[integer, number, string]
       # -- The log level for LMCache, e.g., "DEBUG", "INFO", "WARNING", "ERROR"
       logLevel: INFO # @schema enum:[DEBUG,INFO,WARNING,ERROR]
+      # -- Multiprocess LMCache server mode: renders a sidecar container
+      # running 'lmcache server' in the model pod and wires the vLLM engine to
+      # it via LMCacheMPConnector. Required for hybrid (Mamba/GDN) models,
+      # which LMCacheConnectorV1 does not support (Hybrid KV Manager).
+      # mpServer:
+      #   # -- Enable the multiprocess server sidecar
+      #   enabled: true
+      #   # -- Chunk size; must equal the vLLM unified block size (vLLM logs
+      #   #    "Setting attention block size to N tokens" at startup) or a multiple
+      #   chunkSize: "784"
+      #   # -- Host RAM L1 offload size in GiB for the server
+      #   l1SizeGb: "64"
+      #   # -- ZMQ port (connector reaches it on localhost; same pod)
+      #   port: 5555
+      #   # -- HTTP/metrics port for the server
+      #   httpPort: 8080
+      #   # -- Give hybrid (Mamba/GDN) layers their own cache objects; required
+      #   #    for hybrid models and for max-num-batched-tokens > 2*chunkSize
+      #   separateObjectGroups: true
+      #   # -- Eviction policy passed to the server
+      #   evictionPolicy: "LRU"
+      #   # -- Sidecar image; defaults to the model's repository:tag
+      #   image: ""
+      #   # -- Sidecar resource requests/limits (no GPU claims)
+      #   resources: {}
     # -- Hugging Face token configuration. Can be either a string that will be stored in a generated secret or an object referencing an existing secret.
     hf_token: # @schema type:[string, object]
       # -- Name of the existing Kubernetes secret that contains the Hugging Face token

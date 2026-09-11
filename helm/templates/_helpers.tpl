@@ -223,6 +223,37 @@ spec:
   Render the pod-level resourceClaims reference for DRA.
   Call with: include "chart.draPodClaims" (dict "releaseName" ... "modelName" ...)
 */}}
+{{/*
+Fail-fast validation for lmcacheConfig.mpServer (LMCache multiprocess sidecar mode).
+Usage: include "chart.mpCheck" $modelSpec
+*/}}
+{{- define "chart.mpCheck" -}}
+{{- if and (hasKey . "lmcacheConfig") (hasKey .lmcacheConfig "mpServer") .lmcacheConfig.mpServer .lmcacheConfig.mpServer.enabled -}}
+{{- $mp := .lmcacheConfig.mpServer -}}
+{{- if not .lmcacheConfig.enabled -}}
+{{- fail (printf "modelSpec '%s': lmcacheConfig.mpServer requires lmcacheConfig.enabled" .name) -}}
+{{- end -}}
+{{- if hasKey .lmcacheConfig "enablePD" -}}
+{{- fail (printf "modelSpec '%s': lmcacheConfig.mpServer and lmcacheConfig.enablePD are mutually exclusive" .name) -}}
+{{- end -}}
+{{- if not (hasKey $mp "chunkSize") -}}
+{{- fail (printf "modelSpec '%s': lmcacheConfig.mpServer.chunkSize is required and must match the vLLM unified block size (see vLLM log line 'Setting attention block size to N tokens')" .name) -}}
+{{- end -}}
+{{- if not (hasKey $mp "l1SizeGb") -}}
+{{- fail (printf "modelSpec '%s': lmcacheConfig.mpServer.l1SizeGb is required (host-RAM L1 offload size in GiB)" .name) -}}
+{{- end -}}
+{{- if and (not (hasKey $mp "image")) (ne .repository "lmcache/vllm-openai") -}}
+{{- fail (printf "modelSpec '%s': lmcacheConfig.mpServer defaults to the model image for the lmcache CLI; set mpServer.image when repository is not lmcache/vllm-openai" .name) -}}
+{{- end -}}
+{{- if not (and (hasKey . "vllmConfig") (hasKey .vllmConfig "tensorParallelSize")) -}}
+{{- fail (printf "modelSpec '%s': lmcacheConfig.mpServer requires vllmConfig.tensorParallelSize so the shared /dev/shm volume renders (CUDA IPC between containers depends on it)" .name) -}}
+{{- end -}}
+{{- if hasKey .lmcacheConfig "cpuOffloadingBufferSize" -}}
+{{- fail (printf "modelSpec '%s': lmcacheConfig.mpServer owns the host-RAM L1 via mpServer.l1SizeGb; unset lmcacheConfig.cpuOffloadingBufferSize" .name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "chart.draPodClaims" -}}
 resourceClaims:
   - name: gpu
