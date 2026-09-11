@@ -1,0 +1,1 @@
+Dependencies are disabled in this deployment (kube-prometheus-stack, prometheus-adapter gate conditions are false in values). The placeholder subcharts satisfy helm dependency resolution without vendoring ~100MB of upstream tarballs. If you enable either condition, run: helm dependency update.
