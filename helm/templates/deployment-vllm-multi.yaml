@@ -134,6 +134,11 @@ spec:
           {{- with .Values.servingEngineSpec.containerSecurityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}
+            {{- if and (hasKey $modelSpec "lmcacheConfig") (hasKey $modelSpec.lmcacheConfig "mpServer") $modelSpec.lmcacheConfig.mpServer $modelSpec.lmcacheConfig.mpServer.enabled }}
+            capabilities:
+              add:
+                - SYS_PTRACE
+            {{- end }}
           {{- end }}
           command:
           {{- if eq $modelSpec.repository "lmcache/vllm-openai" }}
@@ -486,6 +491,10 @@ spec:
           volumeMounts:
             - name: shm
               mountPath: /dev/shm
+          securityContext:
+            capabilities:
+              add:
+                - SYS_PTRACE
           {{- with $mp.resources }}
           resources: {{ toYaml . | nindent 12 }}
           {{- end }}
