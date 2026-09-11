@@ -120,6 +120,12 @@ spec:
       hostIPC: true
       hostPID: true
       {{- end }}
+      {{- if and (hasKey $modelSpec "lmcacheConfig") (hasKey $modelSpec.lmcacheConfig "mpServer") $modelSpec.lmcacheConfig.mpServer $modelSpec.lmcacheConfig.mpServer.enabled }}
+      # LMCacheMPConnector registers KV caches via CUDA IPC; torch's
+      # _new_shared_cuda resolves the exporter with pidfd_open, which only
+      # works across containers sharing a PID namespace.
+      shareProcessNamespace: true
+      {{- end }}
       hostname: "{{ $.Release.Name }}-{{ $modelSpec.name }}-{{ $.Chart.Name }}"
       subdomain: "{{ $.Release.Name }}-{{ $modelSpec.name }}-engine-service"
       containers:
