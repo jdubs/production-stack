@@ -1,6 +1,7 @@
 {{- if .Values.servingEngineSpec.enableEngine -}}
 {{- range $modelSpec := .Values.servingEngineSpec.modelSpec }}
 {{- if ne $modelSpec.enabled false }}
+{{- $_ := include "chart.mpCheck" $modelSpec -}}
 {{- if not (and (hasKey $modelSpec "raySpec") $modelSpec.raySpec.enabled) }}
 {{- $kv_role := "kv_both" }}
 {{- $kv_rank := 0 }}
@@ -115,15 +116,18 @@ spec:
       hostIPC: true
       hostPID: true
       {{- end }}
+      {{- if and (hasKey $modelSpec "lmcacheConfig") (hasKey $modelSpec.lmcacheConfig "mpServer") $modelSpec.lmcacheConfig.mpServer $modelSpec.lmcacheConfig.mpServer.enabled }}
+      # LMCacheMPConnector registers KV caches via CUDA IPC; torch's
+      # _new_shared_cuda resolves the exporter with pidfd_open, which only
+      # works across containers sharing a PID namespace.
+      shareProcessNamespace: true
+      {{- end }}
       hostname: "{{ $.Release.Name }}-{{ $modelSpec.name }}-{{ $.Chart.Name }}"
       subdomain: "{{ $.Release.Name }}-{{ $modelSpec.name }}-engine-service"
       containers:
         - name: "vllm"
           image: "{{ required "Required value 'modelSpec.repository' must be defined !" $modelSpec.repository }}:{{ required "Required value 'modelSpec.tag' must be defined !" $modelSpec.tag }}"
-          {{- with .Values.servingEngineSpec.containerSecurityContext }}
-          securityContext:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
+          {{- include "chart.vllmSecurityContext" (dict "secContext" $.Values.servingEngineSpec.containerSecurityContext "modelSpec" $modelSpec) | nindent 10 }}
           command:
           {{- if eq $modelSpec.repository "lmcache/vllm-openai" }}
           - "/opt/venv/bin/vllm"
@@ -203,7 +207,10 @@ spec:
           {{- end }}
           {{- if $modelSpec.lmcacheConfig }}
           {{-   if $modelSpec.lmcacheConfig.enabled }}
-          {{-     if hasKey $modelSpec.lmcacheConfig "enablePD" }}
+          {{-     if and (hasKey $modelSpec.lmcacheConfig "mpServer") $modelSpec.lmcacheConfig.mpServer $modelSpec.lmcacheConfig.mpServer.enabled }}
+          - "--kv-transfer-config"
+          - '{"kv_connector":"LMCacheMPConnector","kv_role":"{{ $kv_role }}","kv_connector_extra_config":{"lmcache.mp.port": {{ $modelSpec.lmcacheConfig.mpServer.port | default 5555 }}}}'
+          {{-     else if hasKey $modelSpec.lmcacheConfig "enablePD" }}
           - "--kv-transfer-config"
           - '{"kv_connector":"LMCacheConnectorV1","kv_role":"{{ $kv_role }}","kv_connector_extra_config":{"discard_partial_chunks": false, "lmcache_rpc_port": {{ $modelSpec.lmcacheConfig.nixlRole | quote }}}}'
           {{-     else if and (hasKey $modelSpec.vllmConfig "v0") (eq (toString $modelSpec.vllmConfig.v0) "1") }}
@@ -444,6 +451,83 @@ spec:
           - name: {{ .Release.Name }}-shared-pvc-storage
             mountPath: /data/shared-pvc-storage
           {{- end }}
+        {{- if and (hasKey $modelSpec "lmcacheConfig") (hasKey $modelSpec.lmcacheConfig "mpServer") $modelSpec.lmcacheConfig.mpServer $modelSpec.lmcacheConfig.mpServer.enabled }}
+        {{- $mp := $modelSpec.lmcacheConfig.mpServer }}
+        - name: lmcache-mp-server
+          image: "{{ default (printf "%s:%s" $modelSpec.repository $modelSpec.tag) $mp.image }}"
+          imagePullPolicy: "{{ $.Values.servingEngineSpec.imagePullPolicy }}"
+          command:
+            - "/opt/venv/bin/lmcache"
+          args:
+            - "server"
+            - "--host"
+            - "127.0.0.1"
+            - "--http-host"
+            - "0.0.0.0"
+            - "--port"
+            - {{ $mp.port | default 5555 | quote }}
+            - "--http-port"
+            - {{ $mp.httpPort | default 8080 | quote }}
+            - "--chunk-size"
+            - {{ $mp.chunkSize | quote }}
+            - "--l1-size-gb"
+            - {{ $mp.l1SizeGb | quote }}
+            {{- if $mp.separateObjectGroups }}
+            - "--separate-object-groups"
+            {{- end }}
+            - "--eviction-policy"
+            - {{ $mp.evictionPolicy | default "LRU" | quote }}
+            {{- if or $mp.enableTracing (and (hasKey $modelSpec.lmcacheConfig "enableTracing") $modelSpec.lmcacheConfig.enableTracing) }}
+            - "--enable-tracing"
+            {{- $otlp := default "" $mp.otlpEndpoint | default (default "" $modelSpec.lmcacheConfig.otlpEndpoint) | default (default "" $.Values.routerSpec.otel.endpoint) }}
+            {{- if $otlp }}
+            - "--otlp-endpoint"
+            - {{ $otlp | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with $mp.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: mp-http
+              containerPort: {{ $mp.httpPort | default 8080 }}
+          {{- if $mp.readinessProbe }}
+          readinessProbe:
+            {{- toYaml $mp.readinessProbe | nindent 12 }}
+          {{- else }}
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: mp-http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          {{- end }}
+          {{- if $mp.livenessProbe }}
+          livenessProbe:
+            {{- toYaml $mp.livenessProbe | nindent 12 }}
+          {{- else }}
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: mp-http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          {{- end }}
+          volumeMounts:
+            - name: shm
+              mountPath: /dev/shm
+          securityContext:
+            capabilities:
+              add:
+                - SYS_PTRACE
+          {{- with $mp.resources }}
+          resources: {{ toYaml . | nindent 12 }}
+          {{- end }}
+        {{- end }}
         {{- if and $modelSpec.enableLoRA (hasKey $modelSpec "pvcStorage") }}
         - name: sidecar
           image: {{ .Values.servingEngineSpec.sidecar.image }}

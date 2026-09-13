@@ -297,3 +297,61 @@ app.kubernetes.io/component: cache-server
 app.kubernetes.io/part-of: {{ .chartName }}
 app.kubernetes.io/managed-by: helm
 {{- end -}}
+
+{{/*
+Fail-fast validation for lmcacheConfig.mpServer (LMCache multiprocess sidecar mode).
+Usage: include "chart.mpCheck" $modelSpec
+*/}}
+{{- define "chart.mpCheck" -}}
+{{- if and (hasKey . "lmcacheConfig") (hasKey .lmcacheConfig "mpServer") .lmcacheConfig.mpServer .lmcacheConfig.mpServer.enabled -}}
+{{- $mp := .lmcacheConfig.mpServer -}}
+{{- if not .lmcacheConfig.enabled -}}
+{{- fail (printf "modelSpec '%s': lmcacheConfig.mpServer requires lmcacheConfig.enabled" .name) -}}
+{{- end -}}
+{{- if and (hasKey . "raySpec") (hasKey .raySpec "enabled") .raySpec.enabled -}}
+{{- fail (printf "modelSpec '%s': lmcacheConfig.mpServer is not currently supported with raySpec" .name) -}}
+{{- end -}}
+{{- if hasKey .lmcacheConfig "enablePD" -}}
+{{- fail (printf "modelSpec '%s': lmcacheConfig.mpServer and lmcacheConfig.enablePD are mutually exclusive" .name) -}}
+{{- end -}}
+{{- if not (hasKey $mp "chunkSize") -}}
+{{- fail (printf "modelSpec '%s': lmcacheConfig.mpServer.chunkSize is required and must match the vLLM unified block size (see vLLM log line 'Setting attention block size to N tokens')" .name) -}}
+{{- end -}}
+{{- if not (hasKey $mp "l1SizeGb") -}}
+{{- fail (printf "modelSpec '%s': lmcacheConfig.mpServer.l1SizeGb is required (host-RAM L1 offload size in GiB)" .name) -}}
+{{- end -}}
+{{- if and (not (hasKey $mp "image")) (ne .repository "lmcache/vllm-openai") -}}
+{{- fail (printf "modelSpec '%s': lmcacheConfig.mpServer defaults to the model image for the lmcache CLI; set mpServer.image when repository is not lmcache/vllm-openai" .name) -}}
+{{- end -}}
+{{- if not (and (hasKey . "vllmConfig") (hasKey .vllmConfig "tensorParallelSize")) -}}
+{{- fail (printf "modelSpec '%s': lmcacheConfig.mpServer requires vllmConfig.tensorParallelSize so the shared /dev/shm volume renders (CUDA IPC between containers depends on it)" .name) -}}
+{{- end -}}
+{{- if hasKey .lmcacheConfig "cpuOffloadingBufferSize" -}}
+{{- fail (printf "modelSpec '%s': lmcacheConfig.mpServer owns the host-RAM L1 via mpServer.l1SizeGb; unset lmcacheConfig.cpuOffloadingBufferSize" .name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Render securityContext for the vLLM container.
+Merges servingEngineSpec.containerSecurityContext and adds SYS_PTRACE
+when lmcacheConfig.mpServer is enabled without generating duplicate keys.
+Call with: include "chart.vllmSecurityContext" (dict "secContext" .Values.servingEngineSpec.containerSecurityContext "modelSpec" $modelSpec)
+*/}}
+{{- define "chart.vllmSecurityContext" -}}
+{{- $sc := deepCopy (default dict .secContext) -}}
+{{- $mpEnabled := and (hasKey .modelSpec "lmcacheConfig") (hasKey .modelSpec.lmcacheConfig "mpServer") .modelSpec.lmcacheConfig.mpServer .modelSpec.lmcacheConfig.mpServer.enabled -}}
+{{- if $mpEnabled -}}
+  {{- $caps := deepCopy (default dict (get $sc "capabilities")) -}}
+  {{- $add := deepCopy (default list (get $caps "add")) -}}
+  {{- if not (has "SYS_PTRACE" $add) -}}
+    {{- $add = append $add "SYS_PTRACE" -}}
+  {{- end -}}
+  {{- $_ := set $caps "add" $add -}}
+  {{- $_ := set $sc "capabilities" $caps -}}
+{{- end -}}
+{{- if $sc -}}
+securityContext:
+  {{- toYaml $sc | nindent 2 }}
+{{- end -}}
+{{- end -}}
