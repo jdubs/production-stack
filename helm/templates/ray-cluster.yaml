@@ -3,6 +3,7 @@
 {{- if ne $modelSpec.enabled false }}
 {{- if and (hasKey $modelSpec "raySpec") $modelSpec.raySpec.enabled }}
 {{- $_ := include "chart.draCheck" $modelSpec -}}
+{{- $_ := include "chart.mpCheck" $modelSpec -}}
 {{- with $ }}
 ---
 apiVersion: ray.io/v1

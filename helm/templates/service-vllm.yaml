@@ -28,6 +28,21 @@ spec:
       port: 9999
       targetPort: ucx-port
       protocol: TCP
+    {{- if and (hasKey $modelSpec "lmcacheConfig") (hasKey $modelSpec.lmcacheConfig "mpServer") $modelSpec.lmcacheConfig.mpServer $modelSpec.lmcacheConfig.mpServer.enabled }}
+    {{- $mpPort := $modelSpec.lmcacheConfig.mpServer.httpPort | default 8080 }}
+    {{- $hasPort := false }}
+    {{- range $.Values.servingEngineSpec.extraPorts }}
+    {{-   if eq (int .port) (int $mpPort) }}
+    {{-     $hasPort = true }}
+    {{-   end }}
+    {{- end }}
+    {{- if not $hasPort }}
+    - name: mp-http
+      port: {{ $mpPort }}
+      targetPort: mp-http
+      protocol: TCP
+    {{- end }}
+    {{- end }}
   {{- include "chart.extraPorts" $ | nindent 4 }}
   selector:
     model: "{{ $modelSpec.name }}"

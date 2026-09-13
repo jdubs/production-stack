@@ -24,6 +24,33 @@ spec:
       relabelings:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+    {{- $hasMpServer := false }}
+    {{- range .Values.servingEngineSpec.modelSpec }}
+    {{-   if and (ne .enabled false) (hasKey . "lmcacheConfig") (hasKey .lmcacheConfig "mpServer") .lmcacheConfig.mpServer .lmcacheConfig.mpServer.enabled }}
+    {{-     $hasMpServer = true }}
+    {{-   end }}
+    {{- end }}
+    {{- if $hasMpServer }}
+    {{- $smPort := "mp-http" }}
+    {{- range .Values.servingEngineSpec.extraPorts }}
+    {{-   if eq (int .port) 8080 }}
+    {{-     $smPort = .name }}
+    {{-   end }}
+    {{- end }}
+    - port: {{ $smPort }}
+      path: /metrics
+      honorLabels: {{ .Values.servingEngineSpec.serviceMonitor.honorLabels }}
+      interval: {{ .Values.servingEngineSpec.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.servingEngineSpec.serviceMonitor.scrapeTimeout }}
+      {{- with .Values.servingEngineSpec.serviceMonitor.metricRelabelings }}
+      metricRelabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.servingEngineSpec.serviceMonitor.relabelings }}
+      relabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- end }}
   selector:
     matchLabels:
       app.kubernetes.io/instance: {{ .Release.Name }}

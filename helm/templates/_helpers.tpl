@@ -233,6 +233,9 @@ Usage: include "chart.mpCheck" $modelSpec
 {{- if not .lmcacheConfig.enabled -}}
 {{- fail (printf "modelSpec '%s': lmcacheConfig.mpServer requires lmcacheConfig.enabled" .name) -}}
 {{- end -}}
+{{- if and (hasKey . "raySpec") (hasKey .raySpec "enabled") .raySpec.enabled -}}
+{{- fail (printf "modelSpec '%s': lmcacheConfig.mpServer is not currently supported with raySpec" .name) -}}
+{{- end -}}
 {{- if hasKey .lmcacheConfig "enablePD" -}}
 {{- fail (printf "modelSpec '%s': lmcacheConfig.mpServer and lmcacheConfig.enablePD are mutually exclusive" .name) -}}
 {{- end -}}
@@ -438,4 +441,28 @@ app.kubernetes.io/instance: {{ .releaseName }}
 app.kubernetes.io/component: cache-server
 app.kubernetes.io/part-of: {{ .chartName }}
 app.kubernetes.io/managed-by: helm
+{{- end -}}
+
+{{/*
+Render securityContext for the vLLM container.
+Merges servingEngineSpec.containerSecurityContext and adds SYS_PTRACE
+when lmcacheConfig.mpServer is enabled without generating duplicate keys.
+Call with: include "chart.vllmSecurityContext" (dict "secContext" .Values.servingEngineSpec.containerSecurityContext "modelSpec" $modelSpec)
+*/}}
+{{- define "chart.vllmSecurityContext" -}}
+{{- $sc := deepCopy (default dict .secContext) -}}
+{{- $mpEnabled := and (hasKey .modelSpec "lmcacheConfig") (hasKey .modelSpec.lmcacheConfig "mpServer") .modelSpec.lmcacheConfig.mpServer .modelSpec.lmcacheConfig.mpServer.enabled -}}
+{{- if $mpEnabled -}}
+  {{- $caps := deepCopy (default dict (get $sc "capabilities")) -}}
+  {{- $add := deepCopy (default list (get $caps "add")) -}}
+  {{- if not (has "SYS_PTRACE" $add) -}}
+    {{- $add = append $add "SYS_PTRACE" -}}
+  {{- end -}}
+  {{- $_ := set $caps "add" $add -}}
+  {{- $_ := set $sc "capabilities" $caps -}}
+{{- end -}}
+{{- if $sc -}}
+securityContext:
+  {{- toYaml $sc | nindent 2 }}
+{{- end -}}
 {{- end -}}
